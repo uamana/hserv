@@ -2,6 +2,8 @@
 
 HTTP server with TLS support for serving HLS playlists (`.m3u8`) and chunks (`.ts`) for [radiostream](https://github.com/uamana/radiostream).
 
+Main purpose is to store session and user info in TimescaleDB for statistics.
+
 ## Usage
 
 ```bash
