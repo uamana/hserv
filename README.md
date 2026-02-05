@@ -4,6 +4,22 @@ HTTP server with TLS support for serving HLS playlists (`.m3u8`) and chunks (`.t
 
 Main purpose is to store session and user info in TimescaleDB for statistics.
 
+## Chunk name format
+
+To properly handle DB updates chunk name **MUST** follow this format:
+```
+<codec>_<quality>_<timestamp>_<sequence>.<ext>
+```
+
+Where:
+| Name | Description |
+|------|-------------|
+| `codec` | Audio codec (mp3, acc, etc.) |
+| `quality` | HLS stream quality: `lofi`, `hifi`, `midfi` |
+| `timestamp` | Unix time (timestamp) of chunk creation |
+| `sequence` | Sequnce number (may be zero), now not used |
+| `ext` | Extension of chunk file, value of `-ext` command line arg |
+
 ## Usage
 
 ```bash
