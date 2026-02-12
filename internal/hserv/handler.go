@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/uamana/hserv/internal/chunklog"
 )
 
 func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +133,18 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 			"uid", uid,
 			"referer", r.Referer(),
 		)
+		if h.ChunkWriter != nil {
+			h.ChunkWriter.Send(chunklog.ChunkEvent{
+				Time:      time.Now(),
+				Path:      path,
+				ChunkSize: info.Size(),
+				IP:        r.RemoteAddr,
+				UserAgent: r.UserAgent(),
+				Referer:   r.Referer(),
+				SID:       sid,
+				UID:       uid,
+			})
+		}
 		return
 	}
 

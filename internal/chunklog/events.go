@@ -19,8 +19,8 @@ type ChunkEvent struct {
 	IP        string
 	UserAgent string
 	Referer   string
-	SID       uuid.UUID
-	UID       uuid.UUID
+	SID       string
+	UID       string
 	ChunkSize int64
 }
 
@@ -198,8 +198,18 @@ func parseEvent(event *ChunkEvent, dbEvent *DBEvent, parser *useragent.Parser) {
 	}
 
 	dbEvent.Referer = event.Referer
-	dbEvent.SID = event.SID
-	dbEvent.UID = event.UID
+
+	sid, err := uuid.Parse(event.SID)
+	if err != nil {
+		dbEvent.SID = uuid.Nil
+	} else {
+		dbEvent.SID = sid
+	}
+	uid, err := uuid.Parse(event.UID)
+	if err != nil {
+		dbEvent.UID = uuid.Nil
+	}
+	dbEvent.UID = uid
 
 	// User agent parsing and enrichment.
 	if event.UserAgent == "" {
