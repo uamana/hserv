@@ -2,6 +2,9 @@ package chunklog
 
 import (
 	"net"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,7 +29,30 @@ const (
 	ChunkQualityLoFi ChunkQuality = iota
 	ChunkQualityMidFi
 	ChunkQualityHiFi
+	ChunkQualityUnknown ChunkQuality = 255
 )
+
+var ChunkQualityNames = []string{"lofi", "midfi", "hifi"}
+
+func (c ChunkQuality) String() string {
+	if int(c) < len(ChunkQualityNames) {
+		return ChunkQualityNames[c]
+	}
+	return "unknown"
+}
+
+func ChunkQualityFromString(s string) ChunkQuality {
+	switch s {
+	case "lofi":
+		return ChunkQualityLoFi
+	case "midfi":
+		return ChunkQualityMidFi
+	case "hifi":
+		return ChunkQualityHiFi
+	default:
+		return ChunkQualityUnknown
+	}
+}
 
 type Codec byte
 
@@ -43,37 +69,38 @@ const (
 	CodecUnknown Codec = 255
 )
 
-var CodecTypes = map[string]Codec{
-	"aac":         CodecAAC,
-	"mp3":         CodecMP3,
-	"ac3":         CodecAC3,
-	"eac3":        CodecEAC3,
-	"dolby_atmos": CodecDolbyAtmos,
-	"flac":        CodecFLAC,
-	"opus":        CodecOpus,
-	"speex":       CodecSpeex,
-	"vorbis":      CodecVorbis,
-	"":            CodecUnknown,
-}
-
-var CodecNames = map[Codec]string{
-	CodecAAC:        "aac",
-	CodecMP3:        "mp3",
-	CodecAC3:        "ac3",
-	CodecEAC3:       "eac3",
-	CodecDolbyAtmos: "dolby_atmos",
-	CodecFLAC:       "flac",
-	CodecOpus:       "opus",
-	CodecSpeex:      "speex",
-	CodecVorbis:     "vorbis",
-}
+var CodecNames = []string{"aac", "mp3", "ac3", "eac3", "dolby_atmos", "flac", "opus", "speex", "vorbis"}
 
 func (c Codec) String() string {
-	name, ok := CodecNames[c]
-	if !ok {
-		return "unknown"
+	if int(c) < len(CodecNames) {
+		return CodecNames[c]
 	}
-	return name
+	return "unknown"
+}
+
+func CodecFromString(s string) Codec {
+	switch s {
+	case "aac":
+		return CodecAAC
+	case "mp3":
+		return CodecMP3
+	case "ac3":
+		return CodecAC3
+	case "eac3":
+		return CodecEAC3
+	case "dolby_atmos":
+		return CodecDolbyAtmos
+	case "flac":
+		return CodecFLAC
+	case "opus":
+		return CodecOpus
+	case "speex":
+		return CodecSpeex
+	case "vorbis":
+		return CodecVorbis
+	default:
+		return CodecUnknown
+	}
 }
 
 var chunkRequestColumns = []string{
@@ -154,7 +181,7 @@ type DBEvent struct {
 	UAIsYandexBrowser  bool
 }
 
-func parseEvent(event *ChunkEvent, dbEvent *DBEvent) {
+func parseEvent(event *ChunkEvent, dbEvent *DBEvent, parser *useragent.Parser) {
 	if dbEvent == nil {
 		return
 	}
@@ -162,7 +189,13 @@ func parseEvent(event *ChunkEvent, dbEvent *DBEvent) {
 	// Basic fields copied directly from the event.
 	dbEvent.Time = event.Time
 	dbEvent.Path = event.Path
-	dbEvent.IP = net.ParseIP(event.IP)
+
+	if strings.Contains(event.IP, ":") {
+		dbEvent.IP = net.ParseIP(strings.Split(event.IP, ":")[0])
+	} else {
+		dbEvent.IP = net.ParseIP(event.IP)
+	}
+
 	dbEvent.Referer = event.Referer
 	dbEvent.SID = event.SID
 	dbEvent.UID = event.UID
@@ -172,11 +205,12 @@ func parseEvent(event *ChunkEvent, dbEvent *DBEvent) {
 		return
 	}
 
-	ua := useragent.NewParser().Parse(event.UserAgent)
+	ua := parser.Parse(event.UserAgent)
 
 	dbEvent.UABrowser = ua.Browser().String()
 	dbEvent.UABrowserVersion = ua.BrowserVersion()
 	dbEvent.UADevice = ua.Device().String()
+	dbEvent.UAOS = ua.OS().String()
 
 	dbEvent.UAIsDesktop = ua.IsDesktop()
 	dbEvent.UAIsMobile = ua.IsMobile()
@@ -200,4 +234,15 @@ func parseEvent(event *ChunkEvent, dbEvent *DBEvent) {
 	dbEvent.UAIsSamsungBrowser = ua.IsSamsungBrowser()
 	dbEvent.UAIsVivaldi = ua.IsVivaldi()
 	dbEvent.UAIsYandexBrowser = ua.IsYandexBrowser()
+
+	chunkFileName := filepath.Base(event.Path)
+	parts := strings.Split(chunkFileName, "_")
+	if len(parts) != 4 {
+		return
+	}
+	dbEvent.ChunkCodec = CodecFromString(parts[0])
+	dbEvent.ChunkQuality = ChunkQualityFromString(parts[1])
+	chunkTimestamp, _ := strconv.ParseInt(parts[2], 10, 64)
+	dbEvent.ChunkTimestamp = time.Unix(chunkTimestamp, 0)
+	dbEvent.ChunkSequence, _ = strconv.ParseInt(parts[3], 10, 64)
 }
