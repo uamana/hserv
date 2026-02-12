@@ -71,6 +71,10 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 		sid      string = r.URL.Query().Get(h.SidName)
 	)
 
+	if sid == "" {
+		sid = uuid.New().String()
+	}
+
 	uidCookie, err := r.Cookie(h.UidName)
 	if err != nil && err != http.ErrNoCookie {
 		slog.Error("failed to get uid cookie", "error", err)
@@ -78,8 +82,11 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if uidCookie == nil {
-		uid = uuid.New().String()
-		isNewUid = true
+		uid = r.URL.Query().Get(h.UidName)
+		if uid == "" {
+			uid = uuid.New().String()
+			isNewUid = true
+		}
 		uidCookie = &http.Cookie{
 			Name:     h.UidName,
 			Value:    uid,
@@ -121,12 +128,10 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 			"ip", r.RemoteAddr,
 			"user-agent", r.UserAgent(),
 			"sid", sid,
+			"uid", uid,
+			"referer", r.Referer(),
 		)
 		return
-	}
-
-	if sid == "" {
-		sid = uuid.New().String()
 	}
 
 	scanner := bufio.NewScanner(file)
@@ -139,7 +144,7 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(line, "#") {
 			_, err = outBuf.WriteString(line + "\n")
 		} else {
-			_, err = outBuf.WriteString(line + "?" + h.SidName + "=" + sid + "\n")
+			_, err = outBuf.WriteString(line + "?" + h.SidName + "=" + sid + "&" + h.UidName + "=" + uid + "\n")
 		}
 		if err != nil {
 			slog.Error("failed to write output", "error", err)
