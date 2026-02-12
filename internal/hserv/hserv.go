@@ -1,13 +1,19 @@
 package hserv
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"mime"
 	"net/http"
+	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
+
+	"github.com/uamana/hserv/internal/chunklog"
 )
 
 type HServ struct {
@@ -22,9 +28,10 @@ type HServ struct {
 	BufferSize   int
 	TLSCertPath  string
 	TLSKeyPath   string
+	ChunkWriter  *chunklog.Writer
 }
 
-func (h *HServ) Run() (err error) {
+func (h *HServ) Run(ctx context.Context) (err error) {
 	h.RootDir, err = filepath.Abs(h.RootDir)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path of root directory: %w", err)
@@ -58,5 +65,40 @@ func (h *HServ) Run() (err error) {
 		"tlsKeyPath", h.TLSKeyPath,
 	)
 
-	return srv.ListenAndServeTLS("", "")
+	// Graceful shutdown: wait for SIGINT/SIGTERM (or parent context cancellation),
+	// then drain chunk writer before shutting down the HTTP server.
+	srvCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServeTLS("", "")
+	}()
+
+	select {
+	case err := <-errCh:
+		// Server exited on its own (listener error or similar).
+		// Best-effort flush of any pending chunklog events.
+		if h.ChunkWriter != nil {
+			shutdownCtx, cancel := context.WithTimeout(srvCtx, 5*time.Second)
+			defer cancel()
+			h.ChunkWriter.Shutdown(shutdownCtx)
+		}
+		return err
+
+	case <-srvCtx.Done():
+		// OS signal: first drain the chunklog writer, then gracefully
+		// shut down the HTTP server.
+		shutdownCtx, cancel := context.WithTimeout(srvCtx, 5*time.Second)
+		defer cancel()
+
+		if h.ChunkWriter != nil {
+			h.ChunkWriter.Shutdown(shutdownCtx)
+		}
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		return nil
+	}
 }
