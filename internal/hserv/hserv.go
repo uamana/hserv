@@ -41,7 +41,7 @@ func (h *HServ) Run(ctx context.Context) (err error) {
 		h.ChunkMIME = mime.TypeByExtension(h.ChunkExt)
 	}
 
-	kpr, err := NewKeypairReloader(h.TLSCertPath, h.TLSKeyPath)
+	kpr, err := NewKeypairReloader(ctx, h.TLSCertPath, h.TLSKeyPath)
 	if err != nil {
 		return err
 	}
@@ -80,7 +80,7 @@ func (h *HServ) Run(ctx context.Context) (err error) {
 		// Server exited on its own (listener error or similar).
 		// Best-effort flush of any pending chunklog events.
 		if h.ChunkWriter != nil {
-			shutdownCtx, cancel := context.WithTimeout(srvCtx, 5*time.Second)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			h.ChunkWriter.Shutdown(shutdownCtx)
 		}
@@ -89,7 +89,7 @@ func (h *HServ) Run(ctx context.Context) (err error) {
 	case <-srvCtx.Done():
 		// OS signal: first drain the chunklog writer, then gracefully
 		// shut down the HTTP server.
-		shutdownCtx, cancel := context.WithTimeout(srvCtx, 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		if h.ChunkWriter != nil {

@@ -1,6 +1,7 @@
 package hserv
 
 import (
+	"context"
 	"crypto/tls"
 	"log/slog"
 	"os"
@@ -16,7 +17,7 @@ type keypairReloader struct {
 	keyPath  string
 }
 
-func NewKeypairReloader(certPath, keyPath string) (*keypairReloader, error) {
+func NewKeypairReloader(ctx context.Context, certPath, keyPath string) (*keypairReloader, error) {
 	result := &keypairReloader{
 		certPath: certPath,
 		keyPath:  keyPath,
@@ -29,10 +30,16 @@ func NewKeypairReloader(certPath, keyPath string) (*keypairReloader, error) {
 	go func() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, syscall.SIGHUP)
-		for range c {
-			slog.Info("received SIGHUP, reloading TLS certificate and key")
-			if err := result.maybeReload(); err != nil {
-				slog.Error("keeping old TLS certificate because the new one could not be loaded", "error", err)
+		defer signal.Stop(c)
+		for {
+			select {
+			case <-c:
+				slog.Info("received SIGHUP, reloading TLS certificate and key")
+				if err := result.maybeReload(); err != nil {
+					slog.Error("keeping old TLS certificate because the new one could not be loaded", "error", err)
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()

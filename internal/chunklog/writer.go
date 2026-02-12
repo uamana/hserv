@@ -64,13 +64,11 @@ func (w *Writer) Send(e ChunkEvent) bool {
 }
 
 // Shutdown closes the channel, waits for workers to drain, and closes the pgxpool.
+// The internal context is cancelled only after workers finish (or the deadline
+// expires), so that final flush operations can still reach the database.
 func (w *Writer) Shutdown(ctx context.Context) {
 	w.once.Do(func() {
 		close(w.events)
-		// Cancel internal context to signal all DB operations to stop.
-		if w.cancel != nil {
-			w.cancel()
-		}
 	})
 
 	done := make(chan struct{})
@@ -83,9 +81,8 @@ func (w *Writer) Shutdown(ctx context.Context) {
 	case <-ctx.Done():
 	}
 
-	if w.pool != nil {
-		w.pool.Close()
-	}
+	w.cancel()
+	w.pool.Close()
 }
 
 // Drops returns the number of events dropped due to channel full.
@@ -102,13 +99,13 @@ func (w *Writer) flush(batch *BatchBuffer) error {
 		return err
 	}
 	defer conn.Release()
-	_, _ = conn.Conn().CopyFrom(
+	_, err = conn.Conn().CopyFrom(
 		w.ctx,
 		pgx.Identifier{"chunk_requests"},
 		chunkRequestColumns,
 		batch,
 	)
-	return nil
+	return err
 }
 
 func (w *Writer) worker(cfg Config, id int) {
@@ -150,6 +147,8 @@ func (w *Writer) worker(cfg Config, id int) {
 			}
 		case <-timer.C:
 			needFlush = true
+		case <-w.ctx.Done():
+			return
 		}
 	}
 }
