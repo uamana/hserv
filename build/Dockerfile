@@ -8,6 +8,9 @@ RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Install tern CLI for database migrations
+RUN go install github.com/jackc/tern/v2@latest
+
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /build/hserv ./cmd/hserv
 
@@ -20,6 +23,8 @@ RUN adduser -D -g "" appuser
 WORKDIR /app
 
 COPY --from=builder /build/hserv .
+# Copy tern binary from builder image so it's available at runtime
+COPY --from=builder /go/bin/tern .
 
 USER appuser
 
