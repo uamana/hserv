@@ -48,7 +48,6 @@ ENTRYPOINT ["/bin/sh", "-c", "exec /app/hserv \
   -cert \"${HSERV_CERT:-}\" \
   -key \"${HSERV_KEY:-}\" \
   -db \"${HSERV_DB:-}\" \
-  -workers \"${HSERV_WORKERS:-0}\" \
-  -batch \"${HSERV_BATCH:-1000}\" \
-  -batchtimeout \"${HSERV_BATCHTIMEOUT:-200ms}\" \
-  -channelcap \"${HSERV_CHANNELCAP:-0}\""]
+  -session-timeout \"${HSERV_SESSION_TIMEOUT:-60s}\" \
+  -channelcap \"${HSERV_CHANNELCAP:-10000}\" \
+  -reaper \"${HSERV_REAPER:-10s}\""]

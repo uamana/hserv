@@ -25,6 +25,7 @@ func main() {
 		dbConnString   string
 		sessionTimeout time.Duration
 		channelCap     int
+		reaperInterval time.Duration
 	)
 	flag.StringVar(&addr, "addr", ":6443", "address to listen on")
 	flag.StringVar(&rootDir, "root", ".", "root directory to serve")
@@ -38,6 +39,7 @@ func main() {
 	flag.StringVar(&dbConnString, "db", "", "connection string for the database")
 	flag.DurationVar(&sessionTimeout, "session-timeout", 60*time.Second, "inactivity timeout before a session is flushed to the database")
 	flag.IntVar(&channelCap, "channelcap", 10000, "channel capacity for the session tracker")
+	flag.DurationVar(&reaperInterval, "reaper", 10*time.Second, "interval for the reaper")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -60,6 +62,7 @@ func main() {
 			ConnString:     dbConnString,
 			SessionTimeout: sessionTimeout,
 			ChannelCap:     channelCap,
+			ReaperInterval: reaperInterval,
 		})
 		if err != nil {
 			slog.Error("failed to create session tracker", "error", err)

@@ -18,20 +18,22 @@ type Config struct {
 	ChannelCap     int
 	SessionTimeout time.Duration
 	ConnString     string
+	ReaperInterval time.Duration
 }
 
 // SessionTracker tracks active sessions in memory and flushes completed
 // sessions to the database when they become idle.
 type SessionTracker struct {
-	events      chan ChunkEvent
-	pool        *pgxpool.Pool
-	wg          sync.WaitGroup
-	once        sync.Once
-	drops       atomic.Uint64
-	flushErrors atomic.Uint64
-	timeout     time.Duration
-	ctx         context.Context
-	cancel      context.CancelFunc
+	events         chan ChunkEvent
+	pool           *pgxpool.Pool
+	wg             sync.WaitGroup
+	once           sync.Once
+	drops          atomic.Uint64
+	flushErrors    atomic.Uint64
+	timeout        time.Duration
+	ctx            context.Context
+	cancel         context.CancelFunc
+	reaperInterval time.Duration
 }
 
 // NewSessionTracker creates a new tracker, connects to the database, and
@@ -45,11 +47,12 @@ func NewSessionTracker(ctx context.Context, cfg Config) (*SessionTracker, error)
 	events := make(chan ChunkEvent, cfg.ChannelCap)
 	ctx, cancel := context.WithCancel(ctx)
 	t := &SessionTracker{
-		events:  events,
-		pool:    pool,
-		timeout: cfg.SessionTimeout,
-		ctx:     ctx,
-		cancel:  cancel,
+		events:         events,
+		pool:           pool,
+		timeout:        cfg.SessionTimeout,
+		ctx:            ctx,
+		cancel:         cancel,
+		reaperInterval: cfg.ReaperInterval,
 	}
 
 	t.wg.Add(1)
@@ -96,14 +99,12 @@ func (t *SessionTracker) Drops() uint64 {
 	return t.drops.Load()
 }
 
-const reaperInterval = 10 * time.Second
-
 // run is the single goroutine that owns the sessions map.
 func (t *SessionTracker) run() {
 	defer t.wg.Done()
 	sessions := make(map[uuid.UUID]*Session)
 	parser := useragent.NewParser()
-	reaper := time.NewTicker(reaperInterval)
+	reaper := time.NewTicker(t.reaperInterval)
 	defer reaper.Stop()
 
 	for {

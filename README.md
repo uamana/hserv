@@ -17,6 +17,7 @@ Where:
 | `codec` | Audio codec (mp3, acc, etc.) |
 | `quality` | HLS stream quality: `lofi`, `hifi`, `midfi` |
 | `timestamp` | Unix time (timestamp) of chunk creation |
+| `duration` | Duration of chunk in seconds, float |
 | `sequence` | Sequnce number (may be zero), now not used |
 | `ext` | Extension of chunk file, value of `-ext` command line arg |
 
@@ -26,7 +27,7 @@ Where:
 hserv -addr :6443 -root /path/to/content -cert server.crt -key server.key
 ```
 
-## Arguments
+## Command line flags
 
 | Flag | Default | Description | Docker env var |
 |------|---------|-------------|----------------|
@@ -39,11 +40,7 @@ hserv -addr :6443 -root /path/to/content -cert server.crt -key server.key
 | `-bsize` | `1024` | Buffer size for playlist scanner | `HSERV_BSIZE` |
 | `-cert` | — | Path to TLS certificate | `HSERV_CERT` |
 | `-key` | — | Path to TLS private key | `HSERV_KEY` |
-| `-db` | — | Connection string for the TimescaleDB database (enables chunk logging) | `HSERV_DB` |
-| `-workers` | `0` | Number of workers for the chunk log writer (`0` = number of CPU cores) | `HSERV_WORKERS` |
-| `-batch` | `1000` | Batch size (rows per write) for the chunk log writer | `HSERV_BATCH` |
-| `-batchtimeout` | `200ms` | Maximum time to wait before flushing a partial batch | `HSERV_BATCHTIMEOUT` |
-| `-channelcap` | `0` | Capacity of the chunk event channel (`0` = auto: workers × batch × 2) | `HSERV_CHANNELCAP` |
-
-
-
+| `-db` | — | Connection string for the database (enables session tracking) | `HSERV_DB` |
+| `-session-timeout` | `60s` | Inactivity timeout before a session is flushed to the database | `HSERV_SESSION_TIMEOUT` |
+| `-channelcap` | `10000` | Channel capacity for the session tracker | `HSERV_CHANNELCAP` |
+| `-reaper` | `10s` | Interval for the session reaper | `HSERV_REAPER` |
