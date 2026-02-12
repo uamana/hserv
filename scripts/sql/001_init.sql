@@ -41,3 +41,7 @@ CREATE TABLE IF NOT EXISTS requests (
 ) WITH (
     tsdb.hypertable
 );
+
+---- create above / drop below ----
+
+DROP TABLE IF EXISTS requests;
