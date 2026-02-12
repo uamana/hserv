@@ -10,6 +10,34 @@ import (
 	useragent "github.com/medama-io/go-useragent"
 )
 
+type EventSource byte
+
+const (
+	EventSourceHLS EventSource = iota
+	EventSourceIceCast
+	EventSourceUnknown EventSource = 255
+)
+
+var EventSourceNames = []string{"hls", "icecast"}
+
+func (e EventSource) String() string {
+	if int(e) < len(EventSourceNames) {
+		return EventSourceNames[e]
+	}
+	return "unknown"
+}
+
+func EventSourceFromString(s string) EventSource {
+	switch s {
+	case "hls":
+		return EventSourceHLS
+	case "icecast":
+		return EventSourceIceCast
+	default:
+		return EventSourceUnknown
+	}
+}
+
 // ChunkEvent represents a chunk request event for analytics logging.
 // Pass by value; struct is small.
 type ChunkEvent struct {
@@ -21,6 +49,7 @@ type ChunkEvent struct {
 	SID       string
 	UID       string
 	ChunkSize int64
+	Source    EventSource
 }
 
 type ChunkQuality byte
@@ -107,6 +136,7 @@ func CodecFromString(s string) Codec {
 var sessionColumns = []string{
 	"sid",
 	"uid",
+	"source",
 	"start_time",
 	"end_time",
 	"total_bytes",
@@ -144,6 +174,7 @@ var sessionColumns = []string{
 type Session struct {
 	SID                uuid.UUID
 	UID                uuid.UUID
+	Source             EventSource
 	StartTime          time.Time
 	LastActive         time.Time // written as end_time when flushed to DB
 	TotalBytes         int64
@@ -180,7 +211,7 @@ type Session struct {
 // row returns the session as a row of values matching sessionColumns order.
 func (s *Session) row() []interface{} {
 	return []interface{}{
-		s.SID, s.UID, s.StartTime, s.LastActive, s.TotalBytes,
+		s.SID, s.UID, s.Source, s.StartTime, s.LastActive, s.TotalBytes,
 		s.Codec, s.Quality, s.IP, s.Referer,
 		s.UABrowser, s.UABrowserVersion, s.UADevice, s.UAOS,
 		s.UAIsDesktop, s.UAIsMobile, s.UAIsTablet, s.UAIsTV, s.UAIsBot,
@@ -197,6 +228,7 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 		StartTime:  event.Time,
 		LastActive: event.Time,
 		TotalBytes: event.ChunkSize,
+		Source:     event.Source,
 	}
 
 	// Parse SID.

@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS sessions (
     sid                   UUID              NOT NULL,
     uid                   UUID              NOT NULL,
+    source                SMALLINT          NOT NULL,
     start_time            TIMESTAMPTZ       NOT NULL,
     end_time              TIMESTAMPTZ       NOT NULL,
     total_bytes           BIGINT            NOT NULL DEFAULT 0,

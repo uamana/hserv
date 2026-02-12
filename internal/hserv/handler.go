@@ -143,6 +143,7 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 				Referer:   r.Referer(),
 				SID:       sid,
 				UID:       uid,
+				Source:    chunklog.EventSourceHLS,
 			})
 		}
 		return
