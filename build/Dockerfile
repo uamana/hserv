@@ -32,7 +32,8 @@ EXPOSE 6443
 
 # All params configurable via env (defaults match app flags):
 #   HSERV_ADDR, HSERV_ROOT, HSERV_SID, HSERV_EXT, HSERV_MIME,
-#   HSERV_BSIZE, HSERV_CERT, HSERV_KEY
+#   HSERV_BSIZE, HSERV_CERT, HSERV_KEY, HSERV_DB, HSERV_WORKERS, HSERV_BATCH, 
+#   HSERV_BATCHTIMEOUT, HSERV_CHANNELCAP
 ENTRYPOINT ["/bin/sh", "-c", "exec /app/hserv \
   -addr \"${HSERV_ADDR:-:6443}\" \
   -root \"${HSERV_ROOT:-.}\" \
@@ -42,4 +43,9 @@ ENTRYPOINT ["/bin/sh", "-c", "exec /app/hserv \
   -mime \"${HSERV_MIME:-video/mp2t}\" \
   -bsize \"${HSERV_BSIZE:-1024}\" \
   -cert \"${HSERV_CERT:-}\" \
-  -key \"${HSERV_KEY:-}\""]
+  -key \"${HSERV_KEY:-}\" \
+  -db \"${HSERV_DB:-}\" \
+  -workers \"${HSERV_WORKERS:-0}\" \
+  -batch \"${HSERV_BATCH:-1000}\" \
+  -batchtimeout \"${HSERV_BATCHTIMEOUT:-200ms}\" \
+  -channelcap \"${HSERV_CHANNELCAP:-0}\""]

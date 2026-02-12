@@ -5,6 +5,8 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"runtime"
+	"time"
 
 	"github.com/uamana/hserv/internal/chunklog"
 	"github.com/uamana/hserv/internal/hserv"
@@ -24,6 +26,8 @@ func main() {
 		dbConnString string
 		workerCount  int
 		batchSize    int
+		batchTimeout time.Duration
+		channelCap   int
 	)
 	flag.StringVar(&addr, "addr", ":6443", "address to listen on")
 	flag.StringVar(&rootDir, "root", ".", "root directory to serve")
@@ -37,7 +41,8 @@ func main() {
 	flag.StringVar(&dbConnString, "db", "", "connection string for the database")
 	flag.IntVar(&workerCount, "workers", 0, "number of workers for the chunk log writer")
 	flag.IntVar(&batchSize, "batch", 1000, "batch size for the chunk log writer")
-
+	flag.DurationVar(&batchTimeout, "batchtimeout", 200*time.Millisecond, "batch timeout for the chunk log writer")
+	flag.IntVar(&channelCap, "channelcap", 0, "channel capacity for the chunk log writer")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -45,12 +50,14 @@ func main() {
 
 	if dbConnString != "" {
 		if workerCount <= 0 {
-			slog.Error("worker count must be greater than 0 when database connection string is provided")
-			os.Exit(1)
+			workerCount = runtime.NumCPU()
 		}
 		if batchSize <= 0 {
 			slog.Error("batch size must be greater than 0 when database connection string is provided")
 			os.Exit(1)
+		}
+		if channelCap <= 0 {
+			channelCap = workerCount * batchSize * 2
 		}
 	}
 
@@ -68,8 +75,11 @@ func main() {
 
 	if dbConnString != "" {
 		chunkWriter, err := chunklog.NewWriter(ctx, chunklog.Config{
-			ConnString:  dbConnString,
-			WorkerCount: workerCount,
+			ConnString:   dbConnString,
+			WorkerCount:  workerCount,
+			BatchSize:    batchSize,
+			BatchTimeout: batchTimeout,
+			ChannelCap:   channelCap,
 		})
 		if err != nil {
 			slog.Error("failed to create chunk log writer", "error", err)

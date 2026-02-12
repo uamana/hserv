@@ -3,7 +3,6 @@ package chunklog
 import (
 	"context"
 	"log/slog"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,19 +38,6 @@ func NewWriter(ctx context.Context, cfg Config) (*Writer, error) {
 	pool, err := pgxpool.New(ctx, cfg.ConnString)
 	if err != nil {
 		return nil, err
-	}
-
-	if cfg.WorkerCount == 0 {
-		cfg.WorkerCount = runtime.NumCPU()
-	}
-	if cfg.BatchSize == 0 {
-		cfg.BatchSize = 1000
-	}
-	if cfg.ChannelCap == 0 {
-		cfg.ChannelCap = cfg.WorkerCount * 100
-	}
-	if cfg.BatchTimeout == 0 {
-		cfg.BatchTimeout = 200 * time.Millisecond
 	}
 
 	events := make(chan ChunkEvent, cfg.ChannelCap)
