@@ -7,34 +7,36 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	useragent "github.com/medama-io/go-useragent"
 )
 
-// Config holds Writer configuration.
+// Config holds SessionTracker configuration.
 type Config struct {
-	ChannelCap   int
-	WorkerCount  int
-	BatchSize    int
-	BatchTimeout time.Duration
-	ConnString   string
+	ChannelCap     int
+	SessionTimeout time.Duration
+	ConnString     string
 }
 
-// Writer consumes chunk events from a buffered channel via worker goroutines.
-type Writer struct {
+// SessionTracker tracks active sessions in memory and flushes completed
+// sessions to the database when they become idle.
+type SessionTracker struct {
 	events      chan ChunkEvent
 	pool        *pgxpool.Pool
 	wg          sync.WaitGroup
 	once        sync.Once
 	drops       atomic.Uint64
 	flushErrors atomic.Uint64
+	timeout     time.Duration
 	ctx         context.Context
 	cancel      context.CancelFunc
 }
 
-// NewWriter starts the worker pool and returns a Writer.
-// pgxpool is initialized here; conn string comes from config.
-func NewWriter(ctx context.Context, cfg Config) (*Writer, error) {
+// NewSessionTracker creates a new tracker, connects to the database, and
+// starts the background goroutine.
+func NewSessionTracker(ctx context.Context, cfg Config) (*SessionTracker, error) {
 	pool, err := pgxpool.New(ctx, cfg.ConnString)
 	if err != nil {
 		return nil, err
@@ -42,38 +44,42 @@ func NewWriter(ctx context.Context, cfg Config) (*Writer, error) {
 
 	events := make(chan ChunkEvent, cfg.ChannelCap)
 	ctx, cancel := context.WithCancel(ctx)
-	w := &Writer{events: events, pool: pool, ctx: ctx, cancel: cancel}
-
-	for i := 0; i < cfg.WorkerCount; i++ {
-		w.wg.Add(1)
-		go w.worker(cfg, i)
+	t := &SessionTracker{
+		events:  events,
+		pool:    pool,
+		timeout: cfg.SessionTimeout,
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 
-	return w, nil
+	t.wg.Add(1)
+	go t.run()
+
+	return t, nil
 }
 
-// Send enqueues an event. Non-blocking; returns false if channel is full (event dropped).
-func (w *Writer) Send(e ChunkEvent) bool {
+// Send enqueues a chunk event. Non-blocking; returns false if the channel
+// is full (event dropped).
+func (t *SessionTracker) Send(e ChunkEvent) bool {
 	select {
-	case w.events <- e:
+	case t.events <- e:
 		return true
 	default:
-		w.drops.Add(1)
+		t.drops.Add(1)
 		return false
 	}
 }
 
-// Shutdown closes the channel, waits for workers to drain, and closes the pgxpool.
-// The internal context is cancelled only after workers finish (or the deadline
-// expires), so that final flush operations can still reach the database.
-func (w *Writer) Shutdown(ctx context.Context) {
-	w.once.Do(func() {
-		close(w.events)
+// Shutdown closes the event channel, waits for the background goroutine to
+// drain and flush all remaining sessions, then closes the database pool.
+func (t *SessionTracker) Shutdown(ctx context.Context) {
+	t.once.Do(func() {
+		close(t.events)
 	})
 
 	done := make(chan struct{})
 	go func() {
-		w.wg.Wait()
+		t.wg.Wait()
 		close(done)
 	}()
 	select {
@@ -81,74 +87,111 @@ func (w *Writer) Shutdown(ctx context.Context) {
 	case <-ctx.Done():
 	}
 
-	w.cancel()
-	w.pool.Close()
+	t.cancel()
+	t.pool.Close()
 }
 
-// Drops returns the number of events dropped due to channel full.
-func (w *Writer) Drops() uint64 {
-	return w.drops.Load()
+// Drops returns the number of events dropped due to a full channel.
+func (t *SessionTracker) Drops() uint64 {
+	return t.drops.Load()
 }
 
-func (w *Writer) flush(batch *BatchBuffer) error {
-	if batch.Len() == 0 {
+const reaperInterval = 10 * time.Second
+
+// run is the single goroutine that owns the sessions map.
+func (t *SessionTracker) run() {
+	defer t.wg.Done()
+	sessions := make(map[uuid.UUID]*Session)
+	parser := useragent.NewParser()
+	reaper := time.NewTicker(reaperInterval)
+	defer reaper.Stop()
+
+	for {
+		select {
+		case e, ok := <-t.events:
+			if !ok {
+				// Channel closed — flush all remaining sessions.
+				t.flushAll(sessions)
+				return
+			}
+			t.handleEvent(e, sessions, parser)
+
+		case <-reaper.C:
+			t.reap(sessions)
+
+		case <-t.ctx.Done():
+			t.flushAll(sessions)
+			return
+		}
+	}
+}
+
+func (t *SessionTracker) handleEvent(e ChunkEvent, sessions map[uuid.UUID]*Session, parser *useragent.Parser) {
+	sid, err := uuid.Parse(e.SID)
+	if err != nil {
+		sid = uuid.Nil
+	}
+
+	if s, ok := sessions[sid]; ok {
+		s.LastActive = e.Time
+		s.TotalBytes += e.ChunkSize
+		return
+	}
+
+	sessions[sid] = newSessionFromEvent(&e, parser)
+}
+
+func (t *SessionTracker) reap(sessions map[uuid.UUID]*Session) {
+	now := time.Now()
+	var expired []*Session
+	for sid, s := range sessions {
+		if now.Sub(s.LastActive) > t.timeout {
+			expired = append(expired, s)
+			delete(sessions, sid)
+		}
+	}
+	if len(expired) > 0 {
+		if err := t.flushSessions(expired); err != nil {
+			t.flushErrors.Add(1)
+			slog.Error("failed to flush expired sessions", "error", err, "count", len(expired))
+		}
+	}
+}
+
+func (t *SessionTracker) flushAll(sessions map[uuid.UUID]*Session) {
+	if len(sessions) == 0 {
+		return
+	}
+	all := make([]*Session, 0, len(sessions))
+	for _, s := range sessions {
+		all = append(all, s)
+	}
+	if err := t.flushSessions(all); err != nil {
+		t.flushErrors.Add(1)
+		slog.Error("failed to flush sessions on shutdown", "error", err, "count", len(all))
+	}
+}
+
+func (t *SessionTracker) flushSessions(sessions []*Session) error {
+	if len(sessions) == 0 {
 		return nil
 	}
-	conn, err := w.pool.Acquire(w.ctx)
+	conn, err := t.pool.Acquire(t.ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Release()
+
+	rows := make([][]interface{}, 0, len(sessions))
+	for _, s := range sessions {
+		rows = append(rows, s.row())
+	}
+
 	_, err = conn.Conn().CopyFrom(
-		w.ctx,
-		pgx.Identifier{"chunk_requests"},
-		chunkRequestColumns,
-		batch,
+		t.ctx,
+		pgx.Identifier{"sessions"},
+		sessionColumns,
+		pgx.CopyFromRows(rows),
 	)
 	return err
-}
-
-func (w *Writer) worker(cfg Config, id int) {
-	defer w.wg.Done()
-	logger := slog.With("worker", id)
-	batch := NewBatchBuffer(cfg.BatchSize)
-	timer := time.NewTimer(cfg.BatchTimeout)
-	timer.Stop()
-	defer timer.Stop()
-
-	var (
-		err       error
-		needFlush bool
-	)
-
-	for {
-		if batch.IsFull() || needFlush {
-			if err = w.flush(batch); err != nil {
-				w.flushErrors.Add(1)
-				logger.Error("failed to flush batch", "error", err, "total errors", w.flushErrors.Load())
-			}
-			timer.Stop()
-			batch.Reset()
-			needFlush = false
-			continue
-		}
-		select {
-		case e, ok := <-w.events:
-			if !ok {
-				if err = w.flush(batch); err != nil {
-					w.flushErrors.Add(1)
-					logger.Error("failed to flush batch on shutdown", "error", err, "total errors", w.flushErrors.Load())
-				}
-				return
-			}
-			batch.Add(e)
-			if batch.Len() == 1 {
-				timer.Reset(cfg.BatchTimeout)
-			}
-		case <-timer.C:
-			needFlush = true
-		case <-w.ctx.Done():
-			return
-		}
-	}
 }

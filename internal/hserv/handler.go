@@ -133,8 +133,8 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 			"uid", uid,
 			"referer", r.Referer(),
 		)
-		if h.ChunkWriter != nil {
-			h.ChunkWriter.Send(chunklog.ChunkEvent{
+		if h.SessionTracker != nil {
+			h.SessionTracker.Send(chunklog.ChunkEvent{
 				Time:      time.Now(),
 				Path:      path,
 				ChunkSize: info.Size(),

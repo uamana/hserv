@@ -28,7 +28,7 @@ type HServ struct {
 	BufferSize   int
 	TLSCertPath  string
 	TLSKeyPath   string
-	ChunkWriter  *chunklog.Writer
+	SessionTracker *chunklog.SessionTracker
 }
 
 func (h *HServ) Run(ctx context.Context) (err error) {
@@ -79,10 +79,10 @@ func (h *HServ) Run(ctx context.Context) (err error) {
 	case err := <-errCh:
 		// Server exited on its own (listener error or similar).
 		// Best-effort flush of any pending chunklog events.
-		if h.ChunkWriter != nil {
+		if h.SessionTracker != nil {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			h.ChunkWriter.Shutdown(shutdownCtx)
+			h.SessionTracker.Shutdown(shutdownCtx)
 		}
 		return err
 
@@ -92,8 +92,8 @@ func (h *HServ) Run(ctx context.Context) (err error) {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		if h.ChunkWriter != nil {
-			h.ChunkWriter.Shutdown(shutdownCtx)
+		if h.SessionTracker != nil {
+			h.SessionTracker.Shutdown(shutdownCtx)
 		}
 
 		if err := srv.Shutdown(shutdownCtx); err != nil {

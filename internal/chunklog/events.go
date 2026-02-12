@@ -3,7 +3,6 @@ package chunklog
 import (
 	"net"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -104,19 +103,17 @@ func CodecFromString(s string) Codec {
 	}
 }
 
-var chunkRequestColumns = []string{
-	"time",
-	"path",
-	"ip",
-	"referer",
+// sessionColumns defines the column order for COPY INTO sessions.
+var sessionColumns = []string{
 	"sid",
 	"uid",
-	"chunk_codec",
-	"chunk_quality",
-	"chunk_size",
-	"chunk_duration",
-	"chunk_timestamp",
-	"chunk_sequence",
+	"start_time",
+	"end_time",
+	"total_bytes",
+	"codec",
+	"quality",
+	"ip",
+	"referer",
 	"ua_browser",
 	"ua_browser_version",
 	"ua_device",
@@ -143,19 +140,17 @@ var chunkRequestColumns = []string{
 	"ua_is_yandex_browser",
 }
 
-type DBEvent struct {
-	Time               time.Time
-	Path               string
-	IP                 net.IP
-	Referer            string
+// Session represents an active or completed listening session.
+type Session struct {
 	SID                uuid.UUID
 	UID                uuid.UUID
-	ChunkCodec         Codec
-	ChunkQuality       ChunkQuality
-	ChunkSize          int64
-	ChunkDuration      int
-	ChunkTimestamp     time.Time
-	ChunkSequence      int64
+	StartTime          time.Time
+	LastActive         time.Time // written as end_time when flushed to DB
+	TotalBytes         int64
+	Codec              Codec
+	Quality            ChunkQuality
+	IP                 net.IP
+	Referer            string
 	UABrowser          string
 	UABrowserVersion   string
 	UADevice           string
@@ -182,115 +177,100 @@ type DBEvent struct {
 	UAIsYandexBrowser  bool
 }
 
-func parseEvent(event *ChunkEvent, dbEvent *DBEvent, parser *useragent.Parser) {
-	if dbEvent == nil {
-		return
+// row returns the session as a row of values matching sessionColumns order.
+func (s *Session) row() []interface{} {
+	return []interface{}{
+		s.SID, s.UID, s.StartTime, s.LastActive, s.TotalBytes,
+		s.Codec, s.Quality, s.IP, s.Referer,
+		s.UABrowser, s.UABrowserVersion, s.UADevice, s.UAOS,
+		s.UAIsDesktop, s.UAIsMobile, s.UAIsTablet, s.UAIsTV, s.UAIsBot,
+		s.UAIsAndroid, s.UAIsIOS, s.UAIsWindows, s.UAIsLinux, s.UAIsMac,
+		s.UAIsOpenBSD, s.UAIsChromeOS,
+		s.UAIsChrome, s.UAIsFirefox, s.UAIsSafari, s.UAIsEdge, s.UAIsOpera,
+		s.UAIsSamsungBrowser, s.UAIsVivaldi, s.UAIsYandexBrowser,
+	}
+}
+
+// newSessionFromEvent creates a new Session from the first ChunkEvent for a SID.
+func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
+	s := &Session{
+		StartTime:  event.Time,
+		LastActive: event.Time,
+		TotalBytes: event.ChunkSize,
 	}
 
-	// Basic fields copied directly from the event.
-	dbEvent.Time = event.Time
-	dbEvent.Path = event.Path
-
-	if strings.Contains(event.IP, ":") {
-		dbEvent.IP = net.ParseIP(strings.Split(event.IP, ":")[0])
-	} else {
-		dbEvent.IP = net.ParseIP(event.IP)
-	}
-
-	dbEvent.Referer = event.Referer
-
+	// Parse SID.
 	sid, err := uuid.Parse(event.SID)
 	if err != nil {
-		dbEvent.SID = uuid.Nil
+		s.SID = uuid.Nil
 	} else {
-		dbEvent.SID = sid
+		s.SID = sid
 	}
+
+	// Parse UID.
 	uid, err := uuid.Parse(event.UID)
 	if err != nil {
-		dbEvent.UID = uuid.Nil
-	}
-	dbEvent.UID = uid
-
-	// User agent parsing and enrichment.
-	if event.UserAgent == "" {
-		dbEvent.UABrowser = ""
-		dbEvent.UABrowserVersion = ""
-		dbEvent.UADevice = ""
-		dbEvent.UAOS = ""
-
-		dbEvent.UAIsDesktop = false
-		dbEvent.UAIsMobile = false
-		dbEvent.UAIsTablet = false
-		dbEvent.UAIsTV = false
-		dbEvent.UAIsBot = false
-
-		dbEvent.UAIsAndroid = false
-		dbEvent.UAIsIOS = false
-		dbEvent.UAIsWindows = false
-		dbEvent.UAIsLinux = false
-		dbEvent.UAIsMac = false
-		dbEvent.UAIsOpenBSD = false
-		dbEvent.UAIsChromeOS = false
-
-		dbEvent.UAIsChrome = false
-		dbEvent.UAIsFirefox = false
-		dbEvent.UAIsSafari = false
-		dbEvent.UAIsEdge = false
-		dbEvent.UAIsOpera = false
-		dbEvent.UAIsSamsungBrowser = false
-		dbEvent.UAIsVivaldi = false
-		dbEvent.UAIsYandexBrowser = false
+		s.UID = uuid.Nil
 	} else {
-		ua := parser.Parse(event.UserAgent)
-
-		dbEvent.UABrowser = ua.Browser().String()
-		dbEvent.UABrowserVersion = ua.BrowserVersion()
-		dbEvent.UADevice = ua.Device().String()
-		dbEvent.UAOS = ua.OS().String()
-
-		dbEvent.UAIsDesktop = ua.IsDesktop()
-		dbEvent.UAIsMobile = ua.IsMobile()
-		dbEvent.UAIsTablet = ua.IsTablet()
-		dbEvent.UAIsTV = ua.IsTV()
-		dbEvent.UAIsBot = ua.IsBot()
-
-		dbEvent.UAIsAndroid = ua.IsAndroidOS()
-		dbEvent.UAIsIOS = ua.IsIOS()
-		dbEvent.UAIsWindows = ua.IsWindows()
-		dbEvent.UAIsLinux = ua.IsLinux()
-		dbEvent.UAIsMac = ua.IsMacOS()
-		dbEvent.UAIsOpenBSD = ua.IsOpenBSD()
-		dbEvent.UAIsChromeOS = ua.IsChromeOS()
-
-		dbEvent.UAIsChrome = ua.IsChrome()
-		dbEvent.UAIsFirefox = ua.IsFirefox()
-		dbEvent.UAIsSafari = ua.IsSafari()
-		dbEvent.UAIsEdge = ua.IsEdge()
-		dbEvent.UAIsOpera = ua.IsOpera()
-		dbEvent.UAIsSamsungBrowser = ua.IsSamsungBrowser()
-		dbEvent.UAIsVivaldi = ua.IsVivaldi()
-		dbEvent.UAIsYandexBrowser = ua.IsYandexBrowser()
+		s.UID = uid
 	}
 
-	dbEvent.ChunkSize = event.ChunkSize
+	// Parse IP (strip port if present).
+	if strings.Contains(event.IP, ":") {
+		s.IP = net.ParseIP(strings.Split(event.IP, ":")[0])
+	} else {
+		s.IP = net.ParseIP(event.IP)
+	}
+
+	s.Referer = event.Referer
+
+	// Parse User-Agent.
+	if event.UserAgent != "" {
+		ua := parser.Parse(event.UserAgent)
+		s.UABrowser = ua.Browser().String()
+		s.UABrowserVersion = ua.BrowserVersion()
+		s.UADevice = ua.Device().String()
+		s.UAOS = ua.OS().String()
+
+		s.UAIsDesktop = ua.IsDesktop()
+		s.UAIsMobile = ua.IsMobile()
+		s.UAIsTablet = ua.IsTablet()
+		s.UAIsTV = ua.IsTV()
+		s.UAIsBot = ua.IsBot()
+
+		s.UAIsAndroid = ua.IsAndroidOS()
+		s.UAIsIOS = ua.IsIOS()
+		s.UAIsWindows = ua.IsWindows()
+		s.UAIsLinux = ua.IsLinux()
+		s.UAIsMac = ua.IsMacOS()
+		s.UAIsOpenBSD = ua.IsOpenBSD()
+		s.UAIsChromeOS = ua.IsChromeOS()
+
+		s.UAIsChrome = ua.IsChrome()
+		s.UAIsFirefox = ua.IsFirefox()
+		s.UAIsSafari = ua.IsSafari()
+		s.UAIsEdge = ua.IsEdge()
+		s.UAIsOpera = ua.IsOpera()
+		s.UAIsSamsungBrowser = ua.IsSamsungBrowser()
+		s.UAIsVivaldi = ua.IsVivaldi()
+		s.UAIsYandexBrowser = ua.IsYandexBrowser()
+	}
+
+	// Parse codec and quality from chunk filename.
 	if event.Path != "" {
 		chunkFileName := filepath.Base(event.Path)
 		parts := strings.Split(chunkFileName, "_")
-		if len(parts) != 5 {
-			return
+		if len(parts) >= 2 {
+			s.Codec = CodecFromString(parts[0])
+			s.Quality = ChunkQualityFromString(parts[1])
+		} else {
+			s.Codec = CodecUnknown
+			s.Quality = ChunkQualityUnknown
 		}
-		dbEvent.ChunkCodec = CodecFromString(parts[0])
-		dbEvent.ChunkQuality = ChunkQualityFromString(parts[1])
-		chunkTimestamp, _ := strconv.ParseInt(parts[2], 10, 64)
-		dbEvent.ChunkTimestamp = time.Unix(chunkTimestamp, 0)
-		chunkDuration, _ := strconv.ParseFloat(parts[3], 64)
-		dbEvent.ChunkDuration = int(chunkDuration*100) * 10
-		dbEvent.ChunkSequence, _ = strconv.ParseInt(parts[3], 10, 64)
 	} else {
-		dbEvent.ChunkCodec = CodecUnknown
-		dbEvent.ChunkQuality = ChunkQualityUnknown
-		dbEvent.ChunkTimestamp = time.Time{}
-		dbEvent.ChunkSequence = 0
-		dbEvent.ChunkDuration = 0
+		s.Codec = CodecUnknown
+		s.Quality = ChunkQualityUnknown
 	}
+
+	return s
 }

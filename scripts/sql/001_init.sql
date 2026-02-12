@@ -1,19 +1,16 @@
--- Schema for chunk_requests table used by internal/chunklog DBEvent.
--- TimescaleDB / PostgreSQL.
+-- Schema for sessions table used by internal/chunklog SessionTracker.
+-- PostgreSQL.
 
-CREATE TABLE IF NOT EXISTS requests (
-    time                  TIMESTAMPTZ       NOT NULL,
-    path                  TEXT              NOT NULL,
-    ip                    INET,
-    referer               VARCHAR(255),
+CREATE TABLE IF NOT EXISTS sessions (
     sid                   UUID              NOT NULL,
     uid                   UUID              NOT NULL,
-    chunk_codec           SMALLINT,
-    chunk_quality         SMALLINT,
-    chunk_size            BIGINT,
-    chunk_duration        INTEGER,
-    chunk_timestamp       TIMESTAMPTZ,
-    chunk_sequence        BIGINT,
+    start_time            TIMESTAMPTZ       NOT NULL,
+    end_time              TIMESTAMPTZ       NOT NULL,
+    total_bytes           BIGINT            NOT NULL DEFAULT 0,
+    codec                 SMALLINT,
+    quality               SMALLINT,
+    ip                    INET,
+    referer               VARCHAR(255),
     ua_browser            VARCHAR(255),
     ua_browser_version    VARCHAR(255),
     ua_device             VARCHAR(255),
@@ -38,10 +35,8 @@ CREATE TABLE IF NOT EXISTS requests (
     ua_is_samsung_browser BOOLEAN,
     ua_is_vivaldi         BOOLEAN,
     ua_is_yandex_browser  BOOLEAN
-) WITH (
-    tsdb.hypertable
 );
 
 ---- create above / drop below ----
 
-DROP TABLE IF EXISTS requests;
+DROP TABLE IF EXISTS sessions;

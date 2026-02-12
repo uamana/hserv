@@ -5,7 +5,6 @@ import (
 	"flag"
 	"log/slog"
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/uamana/hserv/internal/chunklog"
@@ -14,20 +13,18 @@ import (
 
 func main() {
 	var (
-		addr         string
-		rootDir      string
-		sidName      string
-		uidName      string
-		chunkExt     string
-		chunkMIME    string
-		bufferSize   int
-		tlsCertPath  string
-		tlsKeyPath   string
-		dbConnString string
-		workerCount  int
-		batchSize    int
-		batchTimeout time.Duration
-		channelCap   int
+		addr           string
+		rootDir        string
+		sidName        string
+		uidName        string
+		chunkExt       string
+		chunkMIME      string
+		bufferSize     int
+		tlsCertPath    string
+		tlsKeyPath     string
+		dbConnString   string
+		sessionTimeout time.Duration
+		channelCap     int
 	)
 	flag.StringVar(&addr, "addr", ":6443", "address to listen on")
 	flag.StringVar(&rootDir, "root", ".", "root directory to serve")
@@ -39,29 +36,14 @@ func main() {
 	flag.StringVar(&tlsCertPath, "cert", "", "path to the TLS certificate")
 	flag.StringVar(&tlsKeyPath, "key", "", "path to the TLS key")
 	flag.StringVar(&dbConnString, "db", "", "connection string for the database")
-	flag.IntVar(&workerCount, "workers", 0, "number of workers for the chunk log writer")
-	flag.IntVar(&batchSize, "batch", 1000, "batch size for the chunk log writer")
-	flag.DurationVar(&batchTimeout, "batchtimeout", 200*time.Millisecond, "batch timeout for the chunk log writer")
-	flag.IntVar(&channelCap, "channelcap", 0, "channel capacity for the chunk log writer")
+	flag.DurationVar(&sessionTimeout, "session-timeout", 60*time.Second, "inactivity timeout before a session is flushed to the database")
+	flag.IntVar(&channelCap, "channelcap", 10000, "channel capacity for the session tracker")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if dbConnString != "" {
-		if workerCount <= 0 {
-			workerCount = runtime.NumCPU()
-		}
-		if batchSize <= 0 {
-			slog.Error("batch size must be greater than 0 when database connection string is provided")
-			os.Exit(1)
-		}
-		if channelCap <= 0 {
-			channelCap = workerCount * batchSize * 2
-		}
-	}
-
-	hserv := &hserv.HServ{
+	h := &hserv.HServ{
 		Addr:        addr,
 		RootDir:     rootDir,
 		SidName:     sidName,
@@ -74,21 +56,19 @@ func main() {
 	}
 
 	if dbConnString != "" {
-		chunkWriter, err := chunklog.NewWriter(ctx, chunklog.Config{
-			ConnString:   dbConnString,
-			WorkerCount:  workerCount,
-			BatchSize:    batchSize,
-			BatchTimeout: batchTimeout,
-			ChannelCap:   channelCap,
+		tracker, err := chunklog.NewSessionTracker(ctx, chunklog.Config{
+			ConnString:     dbConnString,
+			SessionTimeout: sessionTimeout,
+			ChannelCap:     channelCap,
 		})
 		if err != nil {
-			slog.Error("failed to create chunk log writer", "error", err)
+			slog.Error("failed to create session tracker", "error", err)
 			os.Exit(1)
 		}
-		hserv.ChunkWriter = chunkWriter
+		h.SessionTracker = tracker
 	}
 
-	if err := hserv.Run(ctx); err != nil {
+	if err := h.Run(ctx); err != nil {
 		slog.Error("failed to run hserv", "error", err)
 		os.Exit(1)
 	}
