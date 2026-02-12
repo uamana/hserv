@@ -26,6 +26,9 @@ COPY --from=builder /build/hserv .
 # Copy tern binary from builder image so it's available at runtime
 COPY --from=builder /go/bin/tern .
 
+# Copy tern configuration and migrations
+COPY scripts/sql/* /app/sql/
+
 USER appuser
 
 EXPOSE 6443
