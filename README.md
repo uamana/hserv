@@ -39,3 +39,11 @@ hserv -addr :6443 -root /path/to/content -cert server.crt -key server.key
 | `-bsize` | `1024` | Buffer size for playlist scanner |
 | `-cert` | — | Path to TLS certificate |
 | `-key` | — | Path to TLS private key |
+| `-db` | — | Connection string for the TimescaleDB database (enables chunk logging) |
+| `-workers` | `0` | Number of workers for the chunk log writer (`0` = number of CPU cores) |
+| `-batch` | `1000` | Batch size (rows per write) for the chunk log writer |
+| `-batchtimeout` | `200ms` | Maximum time to wait before flushing a partial batch |
+| `-channelcap` | `0` | Capacity of the chunk event channel (`0` = auto: workers × batch × 2) |
+
+
+
