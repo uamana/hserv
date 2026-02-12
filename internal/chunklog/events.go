@@ -21,6 +21,7 @@ type ChunkEvent struct {
 	Referer   string
 	SID       uuid.UUID
 	UID       uuid.UUID
+	ChunkSize int64
 }
 
 type ChunkQuality byte
@@ -202,47 +203,84 @@ func parseEvent(event *ChunkEvent, dbEvent *DBEvent, parser *useragent.Parser) {
 
 	// User agent parsing and enrichment.
 	if event.UserAgent == "" {
-		return
+		dbEvent.UABrowser = ""
+		dbEvent.UABrowserVersion = ""
+		dbEvent.UADevice = ""
+		dbEvent.UAOS = ""
+
+		dbEvent.UAIsDesktop = false
+		dbEvent.UAIsMobile = false
+		dbEvent.UAIsTablet = false
+		dbEvent.UAIsTV = false
+		dbEvent.UAIsBot = false
+
+		dbEvent.UAIsAndroid = false
+		dbEvent.UAIsIOS = false
+		dbEvent.UAIsWindows = false
+		dbEvent.UAIsLinux = false
+		dbEvent.UAIsMac = false
+		dbEvent.UAIsOpenBSD = false
+		dbEvent.UAIsChromeOS = false
+
+		dbEvent.UAIsChrome = false
+		dbEvent.UAIsFirefox = false
+		dbEvent.UAIsSafari = false
+		dbEvent.UAIsEdge = false
+		dbEvent.UAIsOpera = false
+		dbEvent.UAIsSamsungBrowser = false
+		dbEvent.UAIsVivaldi = false
+		dbEvent.UAIsYandexBrowser = false
+	} else {
+		ua := parser.Parse(event.UserAgent)
+
+		dbEvent.UABrowser = ua.Browser().String()
+		dbEvent.UABrowserVersion = ua.BrowserVersion()
+		dbEvent.UADevice = ua.Device().String()
+		dbEvent.UAOS = ua.OS().String()
+
+		dbEvent.UAIsDesktop = ua.IsDesktop()
+		dbEvent.UAIsMobile = ua.IsMobile()
+		dbEvent.UAIsTablet = ua.IsTablet()
+		dbEvent.UAIsTV = ua.IsTV()
+		dbEvent.UAIsBot = ua.IsBot()
+
+		dbEvent.UAIsAndroid = ua.IsAndroidOS()
+		dbEvent.UAIsIOS = ua.IsIOS()
+		dbEvent.UAIsWindows = ua.IsWindows()
+		dbEvent.UAIsLinux = ua.IsLinux()
+		dbEvent.UAIsMac = ua.IsMacOS()
+		dbEvent.UAIsOpenBSD = ua.IsOpenBSD()
+		dbEvent.UAIsChromeOS = ua.IsChromeOS()
+
+		dbEvent.UAIsChrome = ua.IsChrome()
+		dbEvent.UAIsFirefox = ua.IsFirefox()
+		dbEvent.UAIsSafari = ua.IsSafari()
+		dbEvent.UAIsEdge = ua.IsEdge()
+		dbEvent.UAIsOpera = ua.IsOpera()
+		dbEvent.UAIsSamsungBrowser = ua.IsSamsungBrowser()
+		dbEvent.UAIsVivaldi = ua.IsVivaldi()
+		dbEvent.UAIsYandexBrowser = ua.IsYandexBrowser()
 	}
 
-	ua := parser.Parse(event.UserAgent)
-
-	dbEvent.UABrowser = ua.Browser().String()
-	dbEvent.UABrowserVersion = ua.BrowserVersion()
-	dbEvent.UADevice = ua.Device().String()
-	dbEvent.UAOS = ua.OS().String()
-
-	dbEvent.UAIsDesktop = ua.IsDesktop()
-	dbEvent.UAIsMobile = ua.IsMobile()
-	dbEvent.UAIsTablet = ua.IsTablet()
-	dbEvent.UAIsTV = ua.IsTV()
-	dbEvent.UAIsBot = ua.IsBot()
-
-	dbEvent.UAIsAndroid = ua.IsAndroidOS()
-	dbEvent.UAIsIOS = ua.IsIOS()
-	dbEvent.UAIsWindows = ua.IsWindows()
-	dbEvent.UAIsLinux = ua.IsLinux()
-	dbEvent.UAIsMac = ua.IsMacOS()
-	dbEvent.UAIsOpenBSD = ua.IsOpenBSD()
-	dbEvent.UAIsChromeOS = ua.IsChromeOS()
-
-	dbEvent.UAIsChrome = ua.IsChrome()
-	dbEvent.UAIsFirefox = ua.IsFirefox()
-	dbEvent.UAIsSafari = ua.IsSafari()
-	dbEvent.UAIsEdge = ua.IsEdge()
-	dbEvent.UAIsOpera = ua.IsOpera()
-	dbEvent.UAIsSamsungBrowser = ua.IsSamsungBrowser()
-	dbEvent.UAIsVivaldi = ua.IsVivaldi()
-	dbEvent.UAIsYandexBrowser = ua.IsYandexBrowser()
-
-	chunkFileName := filepath.Base(event.Path)
-	parts := strings.Split(chunkFileName, "_")
-	if len(parts) != 4 {
-		return
+	dbEvent.ChunkSize = event.ChunkSize
+	if event.Path != "" {
+		chunkFileName := filepath.Base(event.Path)
+		parts := strings.Split(chunkFileName, "_")
+		if len(parts) != 5 {
+			return
+		}
+		dbEvent.ChunkCodec = CodecFromString(parts[0])
+		dbEvent.ChunkQuality = ChunkQualityFromString(parts[1])
+		chunkTimestamp, _ := strconv.ParseInt(parts[2], 10, 64)
+		dbEvent.ChunkTimestamp = time.Unix(chunkTimestamp, 0)
+		chunkDuration, _ := strconv.ParseFloat(parts[3], 64)
+		dbEvent.ChunkDuration = int(chunkDuration*100) * 10
+		dbEvent.ChunkSequence, _ = strconv.ParseInt(parts[3], 10, 64)
+	} else {
+		dbEvent.ChunkCodec = CodecUnknown
+		dbEvent.ChunkQuality = ChunkQualityUnknown
+		dbEvent.ChunkTimestamp = time.Time{}
+		dbEvent.ChunkSequence = 0
+		dbEvent.ChunkDuration = 0
 	}
-	dbEvent.ChunkCodec = CodecFromString(parts[0])
-	dbEvent.ChunkQuality = ChunkQualityFromString(parts[1])
-	chunkTimestamp, _ := strconv.ParseInt(parts[2], 10, 64)
-	dbEvent.ChunkTimestamp = time.Unix(chunkTimestamp, 0)
-	dbEvent.ChunkSequence, _ = strconv.ParseInt(parts[3], 10, 64)
 }
