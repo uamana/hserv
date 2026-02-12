@@ -8,7 +8,7 @@ Main purpose is to store session and user info in TimescaleDB for statistics.
 
 To properly handle DB updates chunk name **MUST** follow this format:
 ```
-<codec>_<quality>_<timestamp>_<sequence>.<ext>
+<codec>_<quality>_<timestamp>_<duration>_<sequence>.<ext>
 ```
 
 Where:
