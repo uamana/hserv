@@ -1,21 +1,27 @@
 package chunklog
 
-import "errors"
+import (
+	"errors"
+
+	useragent "github.com/medama-io/go-useragent"
+)
 
 var ErrIndexOutOfBounds = errors.New("index out of bounds")
 
 type BatchBuffer struct {
-	wIdx int
-	rIdx int
-	buf  []DBEvent
-	err  error
+	wIdx   int
+	rIdx   int
+	buf    []DBEvent
+	err    error
+	parser *useragent.Parser
 }
 
 func NewBatchBuffer(size int) *BatchBuffer {
 	return &BatchBuffer{
-		wIdx: 0,
-		rIdx: -1,
-		buf:  make([]DBEvent, size),
+		wIdx:   0,
+		rIdx:   -1,
+		buf:    make([]DBEvent, size),
+		parser: useragent.NewParser(),
 	}
 }
 
@@ -85,7 +91,7 @@ func (b *BatchBuffer) Add(event ChunkEvent) {
 		b.err = ErrIndexOutOfBounds
 		return
 	}
-	parseEvent(&event, &b.buf[b.wIdx])
+	parseEvent(&event, &b.buf[b.wIdx], b.parser)
 	b.wIdx++
 }
 
