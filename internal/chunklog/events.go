@@ -132,6 +132,7 @@ func CodecFromString(s string) Codec {
 	}
 }
 
+// TODO: add mount, for icecast use mount, for HLS use stream name (last dir in path)
 // sessionColumns defines the column order for COPY INTO sessions.
 var sessionColumns = []string{
 	"sid",
@@ -172,40 +173,20 @@ var sessionColumns = []string{
 
 // Session represents an active or completed listening session.
 type Session struct {
-	SID                uuid.UUID
-	UID                uuid.UUID
-	Source             EventSource
-	StartTime          time.Time
-	LastActive         time.Time // written as end_time when flushed to DB
-	TotalBytes         int64
-	Codec              Codec
-	Quality            ChunkQuality
-	IP                 net.IP
-	Referer            string
-	UABrowser          string
-	UABrowserVersion   string
-	UADevice           string
-	UAOS               string
-	UAIsDesktop        bool
-	UAIsMobile         bool
-	UAIsTablet         bool
-	UAIsTV             bool
-	UAIsBot            bool
-	UAIsAndroid        bool
-	UAIsIOS            bool
-	UAIsWindows        bool
-	UAIsLinux          bool
-	UAIsMac            bool
-	UAIsOpenBSD        bool
-	UAIsChromeOS       bool
-	UAIsChrome         bool
-	UAIsFirefox        bool
-	UAIsSafari         bool
-	UAIsEdge           bool
-	UAIsOpera          bool
-	UAIsSamsungBrowser bool
-	UAIsVivaldi        bool
-	UAIsYandexBrowser  bool
+	SID              uuid.UUID
+	UID              uuid.UUID
+	Source           EventSource
+	StartTime        time.Time
+	LastActive       time.Time // written as end_time when flushed to DB
+	TotalBytes       int64
+	Codec            Codec
+	Quality          ChunkQuality
+	IP               net.IP
+	Referer          string
+	UABrowser        string
+	UABrowserVersion string
+	UADevice         string
+	UAOS             string
 }
 
 // row returns the session as a row of values matching sessionColumns order.
@@ -214,11 +195,6 @@ func (s *Session) row() []interface{} {
 		s.SID, s.UID, s.Source, s.StartTime, s.LastActive, s.TotalBytes,
 		s.Codec, s.Quality, s.IP, s.Referer,
 		s.UABrowser, s.UABrowserVersion, s.UADevice, s.UAOS,
-		s.UAIsDesktop, s.UAIsMobile, s.UAIsTablet, s.UAIsTV, s.UAIsBot,
-		s.UAIsAndroid, s.UAIsIOS, s.UAIsWindows, s.UAIsLinux, s.UAIsMac,
-		s.UAIsOpenBSD, s.UAIsChromeOS,
-		s.UAIsChrome, s.UAIsFirefox, s.UAIsSafari, s.UAIsEdge, s.UAIsOpera,
-		s.UAIsSamsungBrowser, s.UAIsVivaldi, s.UAIsYandexBrowser,
 	}
 }
 
@@ -230,6 +206,8 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 		TotalBytes: event.ChunkSize,
 		Source:     event.Source,
 	}
+
+	// TODO: maybe add chunk duration to LastActive time
 
 	// Parse SID.
 	sid, err := uuid.Parse(event.SID)
@@ -263,29 +241,6 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 		s.UABrowserVersion = ua.BrowserVersion()
 		s.UADevice = ua.Device().String()
 		s.UAOS = ua.OS().String()
-
-		s.UAIsDesktop = ua.IsDesktop()
-		s.UAIsMobile = ua.IsMobile()
-		s.UAIsTablet = ua.IsTablet()
-		s.UAIsTV = ua.IsTV()
-		s.UAIsBot = ua.IsBot()
-
-		s.UAIsAndroid = ua.IsAndroidOS()
-		s.UAIsIOS = ua.IsIOS()
-		s.UAIsWindows = ua.IsWindows()
-		s.UAIsLinux = ua.IsLinux()
-		s.UAIsMac = ua.IsMacOS()
-		s.UAIsOpenBSD = ua.IsOpenBSD()
-		s.UAIsChromeOS = ua.IsChromeOS()
-
-		s.UAIsChrome = ua.IsChrome()
-		s.UAIsFirefox = ua.IsFirefox()
-		s.UAIsSafari = ua.IsSafari()
-		s.UAIsEdge = ua.IsEdge()
-		s.UAIsOpera = ua.IsOpera()
-		s.UAIsSamsungBrowser = ua.IsSamsungBrowser()
-		s.UAIsVivaldi = ua.IsVivaldi()
-		s.UAIsYandexBrowser = ua.IsYandexBrowser()
 	}
 
 	// Parse codec and quality from chunk filename.
