@@ -39,7 +39,17 @@ type SessionTracker struct {
 // NewSessionTracker creates a new tracker, connects to the database, and
 // starts the background goroutine.
 func NewSessionTracker(ctx context.Context, cfg Config) (*SessionTracker, error) {
-	pool, err := pgxpool.New(ctx, cfg.ConnString)
+	// pool, err := pgxpool.New(ctx, cfg.ConnString)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	poolCfg, err := pgxpool.ParseConfig(cfg.ConnString)
+	if err != nil {
+		return nil, err
+	}
+	poolCfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +143,9 @@ func (t *SessionTracker) handleEvent(e ChunkEvent, sessions map[uuid.UUID]*Sessi
 		sid = uuid.Nil
 	}
 
+	// TODO: do we need to store uuid.Nil sessions?
+	// TODO: handle icecast session with icecast to uiid mapping
+
 	if s, ok := sessions[sid]; ok {
 		s.LastActive = e.Time
 		s.TotalBytes += e.ChunkSize
@@ -151,10 +164,17 @@ func (t *SessionTracker) reap(sessions map[uuid.UUID]*Session) {
 			delete(sessions, sid)
 		}
 	}
+
+	if err := t.addListenersTotal(len(expired)); err != nil {
+		t.flushErrors.Add(1)
+		slog.Error("failed to add listeners total", "error", err, "count", len(expired))
+	}
+
 	if len(expired) > 0 {
 		if err := t.flushSessions(expired); err != nil {
 			t.flushErrors.Add(1)
-			slog.Error("failed to flush expired sessions", "error", err, "count", len(expired))
+			slog.Error("failed to flush expired sessions", "error", err,
+				"count", len(expired))
 		}
 	}
 }
@@ -194,5 +214,23 @@ func (t *SessionTracker) flushSessions(sessions []*Session) error {
 		sessionColumns,
 		pgx.CopyFromRows(rows),
 	)
+
+	return err
+}
+
+func (t *SessionTracker) addListenersTotal(total int) error {
+	conn, err := t.pool.Acquire(t.ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	_, err = conn.Conn().Exec(
+		t.ctx,
+		"INSERT INTO listeners_total (timestamp, count) VALUES ($1, $2, $3)",
+		time.Now(),
+		total,
+	)
+
 	return err
 }
