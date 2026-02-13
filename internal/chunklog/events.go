@@ -50,6 +50,7 @@ type ChunkEvent struct {
 	UID       string
 	ChunkSize int64
 	Source    EventSource
+	Mount     string
 }
 
 type ChunkQuality byte
@@ -138,37 +139,20 @@ var sessionColumns = []string{
 	"sid",
 	"uid",
 	"source",
+	"mount",
 	"start_time",
 	"end_time",
+	"duration",
 	"total_bytes",
 	"codec",
 	"quality",
 	"ip",
 	"referer",
+	"user_agent",
 	"ua_browser",
 	"ua_browser_version",
 	"ua_device",
 	"ua_os",
-	"ua_is_desktop",
-	"ua_is_mobile",
-	"ua_is_tablet",
-	"ua_is_tv",
-	"ua_is_bot",
-	"ua_is_android",
-	"ua_is_ios",
-	"ua_is_windows",
-	"ua_is_linux",
-	"ua_is_mac",
-	"ua_is_openbsd",
-	"ua_is_chromeos",
-	"ua_is_chrome",
-	"ua_is_firefox",
-	"ua_is_safari",
-	"ua_is_edge",
-	"ua_is_opera",
-	"ua_is_samsung_browser",
-	"ua_is_vivaldi",
-	"ua_is_yandex_browser",
 }
 
 // Session represents an active or completed listening session.
@@ -176,13 +160,16 @@ type Session struct {
 	SID              uuid.UUID
 	UID              uuid.UUID
 	Source           EventSource
+	Mount            string
 	StartTime        time.Time
-	LastActive       time.Time // written as end_time when flushed to DB
+	LastActive       time.Time
+	Duration         time.Duration
 	TotalBytes       int64
 	Codec            Codec
 	Quality          ChunkQuality
 	IP               net.IP
 	Referer          string
+	UserAgent        string
 	UABrowser        string
 	UABrowserVersion string
 	UADevice         string
@@ -192,8 +179,8 @@ type Session struct {
 // row returns the session as a row of values matching sessionColumns order.
 func (s *Session) row() []interface{} {
 	return []interface{}{
-		s.SID, s.UID, s.Source, s.StartTime, s.LastActive, s.TotalBytes,
-		s.Codec, s.Quality, s.IP, s.Referer,
+		s.SID, s.UID, s.Source, s.Mount, s.StartTime, s.LastActive, s.Duration,
+		s.TotalBytes, s.Codec, s.Quality, s.IP, s.Referer, s.UserAgent,
 		s.UABrowser, s.UABrowserVersion, s.UADevice, s.UAOS,
 	}
 }
@@ -205,6 +192,9 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 		LastActive: event.Time,
 		TotalBytes: event.ChunkSize,
 		Source:     event.Source,
+		Mount:      event.Mount,
+		UserAgent:  event.UserAgent,
+		Referer:    event.Referer,
 	}
 
 	// TODO: maybe add chunk duration to LastActive time
@@ -232,8 +222,6 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 		s.IP = net.ParseIP(event.IP)
 	}
 
-	s.Referer = event.Referer
-
 	// Parse User-Agent.
 	if event.UserAgent != "" {
 		ua := parser.Parse(event.UserAgent)
@@ -253,6 +241,12 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 		} else {
 			s.Codec = CodecUnknown
 			s.Quality = ChunkQualityUnknown
+		}
+		// get mount from path (last dir)
+		dir := filepath.Dir(event.Path)
+		parts = strings.Split(dir, "/")
+		if len(parts) > 0 {
+			s.Mount = parts[len(parts)-1]
 		}
 	} else {
 		s.Codec = CodecUnknown

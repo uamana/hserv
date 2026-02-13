@@ -160,6 +160,7 @@ func (t *SessionTracker) reap(sessions map[uuid.UUID]*Session) {
 	var expired []*Session
 	for sid, s := range sessions {
 		if now.Sub(s.LastActive) > t.timeout {
+			s.Duration = now.Sub(s.StartTime)
 			expired = append(expired, s)
 			delete(sessions, sid)
 		}
