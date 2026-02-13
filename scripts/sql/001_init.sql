@@ -18,12 +18,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     ua_browser            VARCHAR(255),
     ua_browser_version    VARCHAR(255),
     ua_device             VARCHAR(255),
-    ua_os                 VARCHAR(255),
+    ua_os                 VARCHAR(255)
 );
 
-CREATE TABLE listeners_total (
+CREATE TABLE IF NOT EXISTS listeners_total (
     timestamp             TIMESTAMPTZ       NOT NULL,
-    count                 BIGINT            NOT NULL DEFAULT 0,
+    source                SMALLINT          NOT NULL,
+    mount                 VARCHAR(255),
+    count                 BIGINT            NOT NULL DEFAULT 0
 );
 
 ---- create above / drop below ----

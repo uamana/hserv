@@ -39,7 +39,6 @@ func EventSourceFromString(s string) EventSource {
 }
 
 // ChunkEvent represents a chunk request event for analytics logging.
-// Pass by value; struct is small.
 type ChunkEvent struct {
 	Time      time.Time
 	Path      string
@@ -51,6 +50,7 @@ type ChunkEvent struct {
 	ChunkSize int64
 	Source    EventSource
 	Mount     string
+	IcecastID int64
 }
 
 type ChunkQuality byte
@@ -133,7 +133,6 @@ func CodecFromString(s string) Codec {
 	}
 }
 
-// TODO: add mount, for icecast use mount, for HLS use stream name (last dir in path)
 // sessionColumns defines the column order for COPY INTO sessions.
 var sessionColumns = []string{
 	"sid",
@@ -174,11 +173,15 @@ type Session struct {
 	UABrowserVersion string
 	UADevice         string
 	UAOS             string
+	// not stored in DB
+	// icecastID is the reverse-lookup key for the icecastSessionsmap
+	// It is used to map the icecast session to the HLS session.
+	icecastID int64
 }
 
 // row returns the session as a row of values matching sessionColumns order.
-func (s *Session) row() []interface{} {
-	return []interface{}{
+func (s *Session) row() []any {
+	return []any{
 		s.SID, s.UID, s.Source, s.Mount, s.StartTime, s.LastActive, s.Duration,
 		s.TotalBytes, s.Codec, s.Quality, s.IP, s.Referer, s.UserAgent,
 		s.UABrowser, s.UABrowserVersion, s.UADevice, s.UAOS,
@@ -195,16 +198,7 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 		Mount:      event.Mount,
 		UserAgent:  event.UserAgent,
 		Referer:    event.Referer,
-	}
-
-	// TODO: maybe add chunk duration to LastActive time
-
-	// Parse SID.
-	sid, err := uuid.Parse(event.SID)
-	if err != nil {
-		s.SID = uuid.Nil
-	} else {
-		s.SID = sid
+		icecastID:  event.IcecastID,
 	}
 
 	// Parse UID.
@@ -216,11 +210,11 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 	}
 
 	// Parse IP (strip port if present).
-	if strings.Contains(event.IP, ":") {
-		s.IP = net.ParseIP(strings.Split(event.IP, ":")[0])
-	} else {
-		s.IP = net.ParseIP(event.IP)
+	host, _, err := net.SplitHostPort(event.IP)
+	if err != nil {
+		host = event.IP
 	}
+	s.IP = net.ParseIP(host)
 
 	// Parse User-Agent.
 	if event.UserAgent != "" {
@@ -242,12 +236,9 @@ func newSessionFromEvent(event *ChunkEvent, parser *useragent.Parser) *Session {
 			s.Codec = CodecUnknown
 			s.Quality = ChunkQualityUnknown
 		}
-		// get mount from path (last dir)
-		dir := filepath.Dir(event.Path)
-		parts = strings.Split(dir, "/")
-		if len(parts) > 0 {
-			s.Mount = parts[len(parts)-1]
-		}
+		// Mount is the last directory component of the path (stream name).
+		// For icecast path is always empty, so s.Mount set for HLS only.
+		s.Mount = filepath.Base(filepath.Dir(event.Path))
 	} else {
 		s.Codec = CodecUnknown
 		s.Quality = ChunkQualityUnknown

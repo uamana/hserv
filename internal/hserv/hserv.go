@@ -17,17 +17,18 @@ import (
 )
 
 type HServ struct {
-	Addr         string
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	RootDir      string
-	SidName      string
-	UidName      string
-	ChunkExt     string
-	ChunkMIME    string
-	BufferSize   int
-	TLSCertPath  string
-	TLSKeyPath   string
+	Addr           string
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	RootDir        string
+	SidName        string
+	UidName        string
+	ChunkExt       string
+	ChunkMIME      string
+	BufferSize     int
+	TLSEnabled     bool
+	TLSCertPath    string
+	TLSKeyPath     string
 	SessionTracker *chunklog.SessionTracker
 }
 
@@ -41,17 +42,19 @@ func (h *HServ) Run(ctx context.Context) (err error) {
 		h.ChunkMIME = mime.TypeByExtension(h.ChunkExt)
 	}
 
-	kpr, err := NewKeypairReloader(ctx, h.TLSCertPath, h.TLSKeyPath)
-	if err != nil {
-		return err
-	}
-
 	srv := &http.Server{
 		Addr:         h.Addr,
 		ReadTimeout:  h.ReadTimeout,
 		WriteTimeout: h.WriteTimeout,
 		Handler:      http.HandlerFunc(h.handler),
-		TLSConfig:    &tls.Config{GetCertificate: kpr.GetCertificateFunc()},
+	}
+
+	if h.TLSEnabled {
+		kpr, err := NewKeypairReloader(ctx, h.TLSCertPath, h.TLSKeyPath)
+		if err != nil {
+			return err
+		}
+		srv.TLSConfig = &tls.Config{GetCertificate: kpr.GetCertificateFunc()}
 	}
 
 	slog.Info("hserv",
@@ -61,44 +64,66 @@ func (h *HServ) Run(ctx context.Context) (err error) {
 		"chunkExt", h.ChunkExt,
 		"chunkMIME", h.ChunkMIME,
 		"bufferSize", h.BufferSize,
-		"tlsCertPath", h.TLSCertPath,
-		"tlsKeyPath", h.TLSKeyPath,
+		"tls", h.TLSEnabled,
 	)
 
 	// Graceful shutdown: wait for SIGINT/SIGTERM (or parent context cancellation),
-	// then drain chunk writer before shutting down the HTTP server.
+	// then shut down the HTTP server first (drain in-flight requests), followed
+	// by the session tracker (flush remaining sessions to DB).
 	srvCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- srv.ListenAndServeTLS("", "")
+		if h.TLSEnabled {
+			errCh <- srv.ListenAndServeTLS("", "")
+		} else {
+			errCh <- srv.ListenAndServe()
+		}
 	}()
 
 	select {
 	case err := <-errCh:
 		// Server exited on its own (listener error or similar).
-		// Best-effort flush of any pending chunklog events.
+		// Best-effort flush of any pending sessions.
 		if h.SessionTracker != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			trackerCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			h.SessionTracker.Shutdown(shutdownCtx)
+			h.SessionTracker.Shutdown(trackerCtx)
 		}
 		return err
 
 	case <-srvCtx.Done():
-		// OS signal: first drain the chunklog writer, then gracefully
-		// shut down the HTTP server.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		// OS signal or parent context cancelled.
+		// First: gracefully shut down the HTTP server to drain in-flight
+		// requests so no new Send() calls arrive on the closed channel.
+		httpCtx, httpCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer httpCancel()
+		if err := srv.Shutdown(httpCtx); err != nil {
+			slog.Error("HTTP server shutdown error", "error", err)
+		}
 
+		// Second: flush remaining sessions now that no new events can arrive.
 		if h.SessionTracker != nil {
-			h.SessionTracker.Shutdown(shutdownCtx)
+			trackerCtx, trackerCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer trackerCancel()
+			h.SessionTracker.Shutdown(trackerCtx)
 		}
+		return err
+	}
+}
 
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return err
-		}
-		return nil
+func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		slog.Warn("method not allowed", "method", r.Method)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+
+	switch r.URL.Path {
+	case "/_in/icecast":
+		h.icecastHandler(w, r)
+	default:
+		h.hlsHandler(w, r)
 	}
 }

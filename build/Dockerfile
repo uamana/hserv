@@ -34,9 +34,10 @@ USER appuser
 EXPOSE 6443
 
 # All params configurable via env (defaults match app flags):
-#   HSERV_ADDR, HSERV_ROOT, HSERV_SID, HSERV_EXT, HSERV_MIME,
-#   HSERV_BSIZE, HSERV_CERT, HSERV_KEY, HSERV_DB, HSERV_WORKERS, HSERV_BATCH, 
-#   HSERV_BATCHTIMEOUT, HSERV_CHANNELCAP
+#   HSERV_ADDR, HSERV_ROOT, HSERV_SID, HSERV_UID, HSERV_EXT, HSERV_MIME,
+#   HSERV_BSIZE, HSERV_READ_TIMEOUT, HSERV_WRITE_TIMEOUT, HSERV_TLS,
+#   HSERV_CERT, HSERV_KEY, HSERV_DB, HSERV_SESSION_TIMEOUT,
+#   HSERV_ICECAST_TIMEOUT, HSERV_CHANNELCAP, HSERV_REAPER
 ENTRYPOINT ["/bin/sh", "-c", "exec /app/hserv \
   -addr \"${HSERV_ADDR:-:6443}\" \
   -root \"${HSERV_ROOT:-.}\" \
@@ -45,9 +46,13 @@ ENTRYPOINT ["/bin/sh", "-c", "exec /app/hserv \
   -ext \"${HSERV_EXT:-.ts}\" \
   -mime \"${HSERV_MIME:-video/mp2t}\" \
   -bsize \"${HSERV_BSIZE:-1024}\" \
+  -read-timeout \"${HSERV_READ_TIMEOUT:-5s}\" \
+  -write-timeout \"${HSERV_WRITE_TIMEOUT:-5s}\" \
+  -tls=\"${HSERV_TLS:-true}\" \
   -cert \"${HSERV_CERT:-}\" \
   -key \"${HSERV_KEY:-}\" \
   -db \"${HSERV_DB:-}\" \
   -session-timeout \"${HSERV_SESSION_TIMEOUT:-60s}\" \
+  -icecast-timeout \"${HSERV_ICECAST_TIMEOUT:-24h}\" \
   -channelcap \"${HSERV_CHANNELCAP:-10000}\" \
   -reaper \"${HSERV_REAPER:-10s}\""]

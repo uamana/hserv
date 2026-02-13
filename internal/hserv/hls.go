@@ -16,24 +16,25 @@ import (
 	"github.com/uamana/hserv/internal/chunklog"
 )
 
-func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		slog.Error("method not allowed", "method", r.Method)
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+func (h *HServ) hlsHandler(w http.ResponseWriter, r *http.Request) {
+	// Handle CORS preflight.
+	if r.Method == http.MethodOptions {
+		setHeaders(w)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
 	path := filepath.Join(h.RootDir, filepath.FromSlash(r.URL.Path))
 	rel, relErr := filepath.Rel(h.RootDir, path)
 	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		slog.Error("wrong path", "path", r.URL.Path)
+		slog.Warn("wrong path", "path", r.URL.Path)
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
 
 	fileExt := filepath.Ext(path)
 	if fileExt != h.ChunkExt && fileExt != ".m3u8" {
-		slog.Error("wrong file extension", "extension", fileExt)
+		slog.Warn("wrong file extension", "extension", fileExt)
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
@@ -41,7 +42,7 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			slog.Error("file not found", "error", err)
+			slog.Warn("file not found", "error", err)
 			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		} else {
 			slog.Error("failed to stat file", "error", err)
@@ -50,7 +51,7 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if info.IsDir() {
-		slog.Error("directory access forbidden")
+		slog.Warn("directory access forbidden")
 		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 		return
 	}
@@ -101,7 +102,7 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 		uid = uidCookie.Value
 		isNewUid = false
 	}
-	w.Header().Set("Set-Cookie", uidCookie.String())
+	http.SetCookie(w, uidCookie)
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -115,16 +116,18 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 		setHeaders(w)
 		w.Header().Set("Content-Type", h.ChunkMIME)
 
-		status := http.StatusOK
+		// Once io.Copy starts writing, the 200 status is already on the wire.
+		// If the copy fails mid-stream, we can only log — the client will see
+		// a truncated body.
 		if _, err := io.Copy(w, file); err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			slog.Error("failed to copy file", "error", err)
-			status = http.StatusInternalServerError
+			slog.Error("failed to copy chunk",
+				"error", err,
+				"path", path,
+				"ip", r.RemoteAddr,
+			)
+			return
 		}
-		// log only chunks
 		slog.Info("chunk",
-			"status", status,
-			"method", r.Method,
 			"path", path,
 			"size", info.Size(),
 			"ip", r.RemoteAddr,
@@ -153,13 +156,23 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 	scanner.Buffer(make([]byte, 0, h.BufferSize), h.BufferSize)
 	outBuf := bytes.NewBuffer(make([]byte, 0, h.BufferSize))
 
+	params := h.SidName + "=" + sid + "&" + h.UidName + "=" + uid
 	for scanner.Scan() {
 		var err error
 		line := scanner.Text()
-		if strings.HasPrefix(line, "#") {
+		switch {
+		case line == "":
+			// Preserve blank lines as-is.
+			_, err = outBuf.WriteString("\n")
+		case strings.HasPrefix(line, "#"):
 			_, err = outBuf.WriteString(line + "\n")
-		} else {
-			_, err = outBuf.WriteString(line + "?" + h.SidName + "=" + sid + "&" + h.UidName + "=" + uid + "\n")
+		default:
+			// Append session params; use '&' if the URI already has a query string.
+			sep := "?"
+			if strings.Contains(line, "?") {
+				sep = "&"
+			}
+			_, err = outBuf.WriteString(line + sep + params + "\n")
 		}
 		if err != nil {
 			slog.Error("failed to write output", "error", err)
@@ -180,6 +193,14 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+	slog.Info("playlist",
+		"path", path,
+		"ip", r.RemoteAddr,
+		"user-agent", r.UserAgent(),
+		"sid", sid,
+		"uid", uid,
+		"referer", r.Referer(),
+	)
 	if isNewUid {
 		//TODO: store info in db
 		slog.Info("new uid", "uid", uid)
@@ -187,10 +208,10 @@ func (h *HServ) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func setHeaders(w http.ResponseWriter) {
-	w.Header().Set("Allow", "GET, HEAD")
+	w.Header().Set("Allow", "GET, HEAD, OPTIONS")
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 
 	w.Header().Set("Cache-Control", "no-cache")

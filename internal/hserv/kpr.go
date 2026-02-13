@@ -10,15 +10,19 @@ import (
 	"syscall"
 )
 
-type keypairReloader struct {
+// KeypairReloader watches for SIGHUP and reloads the TLS certificate
+// and key from disk.
+type KeypairReloader struct {
 	certMu   sync.RWMutex
 	cert     *tls.Certificate
 	certPath string
 	keyPath  string
 }
 
-func NewKeypairReloader(ctx context.Context, certPath, keyPath string) (*keypairReloader, error) {
-	result := &keypairReloader{
+// NewKeypairReloader loads the initial certificate and starts a background
+// goroutine that reloads the certificate on SIGHUP.
+func NewKeypairReloader(ctx context.Context, certPath, keyPath string) (*KeypairReloader, error) {
+	result := &KeypairReloader{
 		certPath: certPath,
 		keyPath:  keyPath,
 	}
@@ -46,7 +50,7 @@ func NewKeypairReloader(ctx context.Context, certPath, keyPath string) (*keypair
 	return result, nil
 }
 
-func (kpr *keypairReloader) maybeReload() error {
+func (kpr *KeypairReloader) maybeReload() error {
 	newCert, err := tls.LoadX509KeyPair(kpr.certPath, kpr.keyPath)
 	if err != nil {
 		return err
@@ -57,7 +61,7 @@ func (kpr *keypairReloader) maybeReload() error {
 	return nil
 }
 
-func (kpr *keypairReloader) GetCertificateFunc() func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+func (kpr *KeypairReloader) GetCertificateFunc() func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	return func(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		kpr.certMu.RLock()
 		defer kpr.certMu.RUnlock()
